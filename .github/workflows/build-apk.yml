@@ -1,19 +1,18 @@
 name: Build Signed Android APK
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main, master ]
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-android-apk:
+  build-apk:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Project
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js 20
@@ -21,146 +20,107 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Setup Java 17 (Temurin)
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install Capacitor Dependencies
-        run: npm install
-
-      - name: Add Android Native Platform
-        run: npx cap add android
-
-      - name: Generate Android Adaptive & Legacy Launcher Icons
+      - name: Install Capacitor & Asset Tools
         run: |
-          npm install -D @capacitor/assets
-          npx capacitor-assets generate --android --iconBackgroundColor "#FFFFFF" --iconBackgroundColorDark "#FFFFFF"
+          npm install --no-audit --no-fund
 
-          python3 -m pip install --quiet pillow
-          python3 - << 'EOF'
-          import os
-          from PIL import Image, ImageDraw
-
-          src_path = "assets/icon-only.png"
-          res_dir = "android/app/src/main/res"
-          bg_hex = "#FFFFFF"
-
-          if os.path.exists(src_path):
-              src = Image.open(src_path).convert("RGBA")
-
-              r = int(bg_hex[1:3], 16)
-              g = int(bg_hex[3:5], 16)
-              b = int(bg_hex[5:7], 16)
-
-              densities = {
-                  "mipmap-mdpi": (48, 108),
-                  "mipmap-hdpi": (72, 162),
-                  "mipmap-xhdpi": (96, 216),
-                  "mipmap-xxhdpi": (144, 324),
-                  "mipmap-xxxhdpi": (192, 432),
-              }
-
-              for folder, (legacy_px, fg_px) in densities.items():
-                  out_dir = os.path.join(res_dir, folder)
-                  os.makedirs(out_dir, exist_ok=True)
-
-                  # 1. Legacy square launcher icon composited on background color
-                  bg_sq = Image.new("RGBA", (legacy_px, legacy_px), (r, g, b, 255))
-                  resized_sq = src.resize((legacy_px, legacy_px), Image.Resampling.LANCZOS)
-                  bg_sq.alpha_composite(resized_sq)
-                  bg_sq.save(os.path.join(out_dir, "ic_launcher.png"), "PNG")
-
-                  # 2. Legacy round launcher icon with circular alpha mask
-                  mask = Image.new("L", (legacy_px, legacy_px), 0)
-                  draw = ImageDraw.Draw(mask)
-                  draw.ellipse((0, 0, legacy_px - 1, legacy_px - 1), fill=255)
-                  round_icon = Image.new("RGBA", (legacy_px, legacy_px), (0, 0, 0, 0))
-                  round_icon.paste(bg_sq, (0, 0), mask)
-                  round_icon.save(os.path.join(out_dir, "ic_launcher_round.png"), "PNG")
-
-                  # 3. Android 8.0+ Adaptive Icon foreground (108dp canvas, 66% safe-zone inner icon)
-                  fg_canvas = Image.new("RGBA", (fg_px, fg_px), (0, 0, 0, 0))
-                  inner_px = int(round(fg_px * 0.66))
-                  offset = (fg_px - inner_px) // 2
-                  resized_fg = src.resize((inner_px, inner_px), Image.Resampling.LANCZOS)
-                  fg_canvas.alpha_composite(resized_fg, (offset, offset))
-                  fg_canvas.save(os.path.join(out_dir, "ic_launcher_foreground.png"), "PNG")
-
-              # 4. Ensure values/ic_launcher_background.xml matches chosen background color
-              values_dir = os.path.join(res_dir, "values")
-              os.makedirs(values_dir, exist_ok=True)
-              with open(os.path.join(values_dir, "ic_launcher_background.xml"), "w", encoding="utf-8") as f:
-                  f.write(f'''<?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <color name="ic_launcher_background">{bg_hex}</color>
-          </resources>
-          ''')
-
-              # 5. Ensure mipmap-anydpi-v26 adaptive XMLs point to color background + foreground
-              anydpi_dir = os.path.join(res_dir, "mipmap-anydpi-v26")
-              os.makedirs(anydpi_dir, exist_ok=True)
-              adaptive_xml = '''<?xml version="1.0" encoding="utf-8"?>
-          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-              <background android:drawable="@color/ic_launcher_background"/>
-              <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
-          </adaptive-icon>
-          '''
-              for xml_name in ("ic_launcher.xml", "ic_launcher_round.xml"):
-                  with open(os.path.join(anydpi_dir, xml_name), "w", encoding="utf-8") as f:
-                      f.write(adaptive_xml)
-          EOF
-
-      - name: Sync Web Assets to Android
-        run: npx cap sync android
-
-      - name: Apply App Version (1.0.0 / 1)
+      - name: Initialize Android Platform & Generate Adaptive Icons
         run: |
-          GRADLE_FILE="android/app/build.gradle"
-          if [ -f "$GRADLE_FILE" ]; then
-            sed -i 's/versionCode [0-9]*/versionCode 1/g' "$GRADLE_FILE"
-            sed -i 's/versionName "[^"]*"/versionName "1.0.0"/g' "$GRADLE_FILE"
-          fi
+          rm -rf android
+          npx cap add android
+          npx capacitor-assets generate --android --iconBackgroundColor '#FFFFFF' || true
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const { execSync } = require("child_process");
 
-      - name: Configure Screen Orientation (portrait)
-        run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ]; then
-            sed -i 's|android:name=".MainActivity"|android:name=".MainActivity" android:screenOrientation="portrait"|g' "$MANIFEST"
-          fi
+            // Ensure multi-density mipmap icons & adaptive XML override Capacitor defaults
+            const resDir = "android/app/src/main/res";
+            const densities = [
+              { name: "mipmap-mdpi", size: 48, fg: 108 },
+              { name: "mipmap-hdpi", size: 72, fg: 162 },
+              { name: "mipmap-xhdpi", size: 96, fg: 216 },
+              { name: "mipmap-xxhdpi", size: 144, fg: 324 },
+              { name: "mipmap-xxxhdpi", size: 192, fg: 432 }
+            ];
 
-      - name: Build & Sign Android APK
-        id: build_apk
+            for (const d of densities) {
+              const dir = path.join(resDir, d.name);
+              fs.mkdirSync(dir, { recursive: true });
+              try {
+                execSync(`convert assets/icon-only.png -resize ${d.size}x${d.size} ${path.join(dir, "ic_launcher.png")}`);
+                execSync(`convert assets/icon-only.png -resize ${d.size}x${d.size} ${path.join(dir, "ic_launcher_round.png")}`);
+                const inner = Math.round(d.fg * 0.66);
+                execSync(`convert assets/icon-foreground.png -resize ${inner}x${inner} -background none -gravity center -extent ${d.fg}x${d.fg} ${path.join(dir, "ic_launcher_foreground.png")}`);
+              } catch (e) {}
+            }
+
+            const anydpiDir = path.join(resDir, "mipmap-anydpi-v26");
+            fs.mkdirSync(anydpiDir, { recursive: true });
+            const adaptiveXml = `<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+</adaptive-icon>`;
+            fs.writeFileSync(path.join(anydpiDir, "ic_launcher.xml"), adaptiveXml);
+            fs.writeFileSync(path.join(anydpiDir, "ic_launcher_round.xml"), adaptiveXml);
+
+            const valuesDir = path.join(resDir, "values");
+            fs.mkdirSync(valuesDir, { recursive: true });
+            const bgColorXml = `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#FFFFFF</color>
+</resources>`;
+            fs.writeFileSync(path.join(valuesDir, "ic_launcher_background.xml"), bgColorXml);
+
+            // Configure versionCode, versionName, orientation & fullscreen
+            const gradlePath = "android/app/build.gradle";
+            if (fs.existsSync(gradlePath)) {
+              let gradle = fs.readFileSync(gradlePath, "utf8");
+              gradle = gradle.replace(/versionCode\s+\d+/, "versionCode 1");
+              gradle = gradle.replace(/versionName\s+"[^"]+"/, "versionName \"1.0.0\"");
+              fs.writeFileSync(gradlePath, gradle);
+            }
+
+            const manifestPath = "android/app/src/main/AndroidManifest.xml";
+            if (fs.existsSync(manifestPath)) {
+              let manifest = fs.readFileSync(manifestPath, "utf8");
+              const orientAttr = "portrait" === "auto" ? "" : ` android:screenOrientation="portrait"`;
+              const themeAttr = true ? ` android:theme="@android:style/Theme.NoTitleBar.Fullscreen"` : "";
+              manifest = manifest.replace(/<activity([^>]*android:name="\.MainActivity"[^>]*)>/, (m, attrs) => {
+                let cleaned = attrs.replace(/\s*android:screenOrientation="[^"]*"/g, "");
+                if (true) cleaned = cleaned.replace(/\s*android:theme="[^"]*"/g, "");
+                return `<activity${cleaned}${orientAttr}${themeAttr}>`;
+              });
+              fs.writeFileSync(manifestPath, manifest);
+            }
+          '
+          npx cap sync android
+
+      - name: Compile Release APK & Sign with Keystore
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease || ./gradlew assembleDebug
+          ./gradlew assembleRelease --no-daemon
           cd ..
+          keytool -genkey -v -keystore release-key.jks -alias html2app -keyalg RSA -keysize 2048 -validity 10000 -storepass android123 -keypass android123 -dname "CN=Comic Video Maker, OU=Mobile, O=TechCorner, L=Jakarta, S=JK, C=ID"
+          BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+          $BUILD_TOOLS/zipalign -v -p 4 android/app/build/outputs/apk/release/app-release-unsigned.apk app-aligned.apk
+          $BUILD_TOOLS/apksigner sign --ks release-key.jks --ks-pass pass:android123 --key-pass pass:android123 --out comic-video-maker-v1.0.0.apk app-aligned.apk
+          $BUILD_TOOLS/apksigner verify comic-video-maker-v1.0.0.apk
 
-          mkdir -p release-out
-          UNSIGNED_APK=$(find android/app/build/outputs/apk -name "*release-unsigned.apk" | head -n 1)
-          DEBUG_APK=$(find android/app/build/outputs/apk -name "*debug.apk" | head -n 1)
-          FINAL_APK="release-out/comic-video-maker-v1.0.0-b${{ github.run_number }}.apk"
-
-          if [ -n "$UNSIGNED_APK" ]; then
-            BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
-            keytool -genkey -v -keystore release.keystore -alias appkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=HTML2App Studio, OU=Mobile, O=Studio, L=Cloud, S=CA, C=US"
-            "$BUILD_TOOLS/zipalign" -v -p 4 "$UNSIGNED_APK" aligned.apk
-            "$BUILD_TOOLS/apksigner" sign --ks release.keystore --ks-pass pass:android --key-pass pass:android --out "$FINAL_APK" aligned.apk
-          elif [ -n "$DEBUG_APK" ]; then
-            cp "$DEBUG_APK" "$FINAL_APK"
-          else
-            echo "No APK output found!" && exit 1
-          fi
-
-          echo "apk_path=$FINAL_APK" >> $GITHUB_OUTPUT
-          ls -lh "$FINAL_APK"
-
-      - name: Publish Signed APK to GitHub Release
+      - name: Publish APK to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0.${{ github.run_number }}
-          name: Release v1.0.0 (Build ${{ github.run_number }})
-          body: "Automated Android APK build generated by HTML2App Studio."
-          files: ${{ steps.build_apk.outputs.apk_path }}
+          tag_name: v1.0.0-${{ github.run_number }}
+          name: "Comic Video Maker v1.0.0 (Build #${{ github.run_number }})"
+          body: "Signed Android APK compiled automatically by HTML2App Studio."
+          files: comic-video-maker-v1.0.0.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
