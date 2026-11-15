@@ -2,14 +2,12 @@ name: Build Signed Android APK
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main, master ]
 
 permissions:
   contents: write
 
 jobs:
-  build-apk:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -18,109 +16,72 @@ jobs:
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
-      - name: Setup Java 17
+      - name: Setup Java 17 (Temurin)
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: "temurin"
+          java-version: "17"
 
-      - name: Install Capacitor & Asset Tools
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Capacitor Dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Add Android Platform
+        run: npx cap add android
+
+      - name: Generate Android Adaptive Icons & Mipmaps
         run: |
-          npm install --no-audit --no-fund
+          python3 -m pip install --quiet pillow || (sudo apt-get update -qq && sudo apt-get install -y -qq python3-pil)
+          python3 generate_icons.py
 
-      - name: Initialize Android Platform & Generate Adaptive Icons
+      - name: Configure Version, Orientation & Fullscreen
         run: |
-          rm -rf android
-          npx cap add android
-          npx capacitor-assets generate --android --iconBackgroundColor '#FFFFFF' || true
-          node -e '
-            const fs = require("fs");
-            const path = require("path");
-            const { execSync } = require("child_process");
+          python3 - << "EOF"
+          import re
+          gradle_path = "android/app/build.gradle"
+          with open(gradle_path, "r") as f:
+              g = f.read()
+          g = re.sub(r"versionCode\s+\d+", "versionCode 1", g)
+          g = re.sub(r'versionName\s+"[^"]+"', 'versionName "1.0.0"', g)
+          with open(gradle_path, "w") as f:
+              f.write(g)
 
-            // Ensure multi-density mipmap icons & adaptive XML override Capacitor defaults
-            const resDir = "android/app/src/main/res";
-            const densities = [
-              { name: "mipmap-mdpi", size: 48, fg: 108 },
-              { name: "mipmap-hdpi", size: 72, fg: 162 },
-              { name: "mipmap-xhdpi", size: 96, fg: 216 },
-              { name: "mipmap-xxhdpi", size: 144, fg: 324 },
-              { name: "mipmap-xxxhdpi", size: 192, fg: 432 }
-            ];
+          manifest_path = "android/app/src/main/AndroidManifest.xml"
+          with open(manifest_path, "r") as f:
+              m = f.read()
+          if "android:screenOrientation=" not in m:
+              m = m.replace("<activity", '<activity android:screenOrientation="portrait"', 1)
+          if True:
+              m = m.replace("Theme.AppCompat.Light.NoActionBar", "Theme.AppCompat.Light.NoActionBar.FullScreen")
+          with open(manifest_path, "w") as f:
+              f.write(m)
+          EOF
 
-            for (const d of densities) {
-              const dir = path.join(resDir, d.name);
-              fs.mkdirSync(dir, { recursive: true });
-              try {
-                execSync(`convert assets/icon-only.png -resize ${d.size}x${d.size} ${path.join(dir, "ic_launcher.png")}`);
-                execSync(`convert assets/icon-only.png -resize ${d.size}x${d.size} ${path.join(dir, "ic_launcher_round.png")}`);
-                const inner = Math.round(d.fg * 0.66);
-                execSync(`convert assets/icon-foreground.png -resize ${inner}x${inner} -background none -gravity center -extent ${d.fg}x${d.fg} ${path.join(dir, "ic_launcher_foreground.png")}`);
-              } catch (e) {}
-            }
+      - name: Sync Web Assets to Android
+        run: npx cap sync android
 
-            const anydpiDir = path.join(resDir, "mipmap-anydpi-v26");
-            fs.mkdirSync(anydpiDir, { recursive: true });
-            const adaptiveXml = `<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/ic_launcher_background"/>
-    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
-</adaptive-icon>`;
-            fs.writeFileSync(path.join(anydpiDir, "ic_launcher.xml"), adaptiveXml);
-            fs.writeFileSync(path.join(anydpiDir, "ic_launcher_round.xml"), adaptiveXml);
-
-            const valuesDir = path.join(resDir, "values");
-            fs.mkdirSync(valuesDir, { recursive: true });
-            const bgColorXml = `<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="ic_launcher_background">#FFFFFF</color>
-</resources>`;
-            fs.writeFileSync(path.join(valuesDir, "ic_launcher_background.xml"), bgColorXml);
-
-            // Configure versionCode, versionName, orientation & fullscreen
-            const gradlePath = "android/app/build.gradle";
-            if (fs.existsSync(gradlePath)) {
-              let gradle = fs.readFileSync(gradlePath, "utf8");
-              gradle = gradle.replace(/versionCode\s+\d+/, "versionCode 1");
-              gradle = gradle.replace(/versionName\s+"[^"]+"/, "versionName \"1.0.0\"");
-              fs.writeFileSync(gradlePath, gradle);
-            }
-
-            const manifestPath = "android/app/src/main/AndroidManifest.xml";
-            if (fs.existsSync(manifestPath)) {
-              let manifest = fs.readFileSync(manifestPath, "utf8");
-              const orientAttr = "portrait" === "auto" ? "" : ` android:screenOrientation="portrait"`;
-              const themeAttr = true ? ` android:theme="@android:style/Theme.NoTitleBar.Fullscreen"` : "";
-              manifest = manifest.replace(/<activity([^>]*android:name="\.MainActivity"[^>]*)>/, (m, attrs) => {
-                let cleaned = attrs.replace(/\s*android:screenOrientation="[^"]*"/g, "");
-                if (true) cleaned = cleaned.replace(/\s*android:theme="[^"]*"/g, "");
-                return `<activity${cleaned}${orientAttr}${themeAttr}>`;
-              });
-              fs.writeFileSync(manifestPath, manifest);
-            }
-          '
-          npx cap sync android
-
-      - name: Compile Release APK & Sign with Keystore
+      - name: Compile Release APK via Gradle
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
-          cd ..
-          keytool -genkey -v -keystore release-key.jks -alias html2app -keyalg RSA -keysize 2048 -validity 10000 -storepass android123 -keypass android123 -dname "CN=Comic Video Maker, OU=Mobile, O=TechCorner, L=Jakarta, S=JK, C=ID"
-          BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
-          $BUILD_TOOLS/zipalign -v -p 4 android/app/build/outputs/apk/release/app-release-unsigned.apk app-aligned.apk
-          $BUILD_TOOLS/apksigner sign --ks release-key.jks --ks-pass pass:android123 --key-pass pass:android123 --out comic-video-maker-v1.0.0.apk app-aligned.apk
-          $BUILD_TOOLS/apksigner verify comic-video-maker-v1.0.0.apk
 
-      - name: Publish APK to GitHub Releases
+      - name: Sign Release APK
+        run: |
+          keytool -genkeypair -v -keystore release.keystore -alias html2app -keyalg RSA -keysize 2048 -validity 10000 -storepass android123 -keypass android123 -dname "CN=HTML2App, OU=Mobile, O=TechCorner, L=Jakarta, S=ID, C=ID"
+          UNSIGNED_APK=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -n 1)
+          "$APKSIGNER" sign --ks release.keystore --ks-pass pass:android123 --key-pass pass:android123 --out "html2app-comic-video-maker-v1.0.0.apk" "$UNSIGNED_APK"
+          ls -lh "html2app-comic-video-maker-v1.0.0.apk"
+
+      - name: Publish Signed APK to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0-${{ github.run_number }}
-          name: "Comic Video Maker v1.0.0 (Build #${{ github.run_number }})"
-          body: "Signed Android APK compiled automatically by HTML2App Studio."
-          files: comic-video-maker-v1.0.0.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: v1.0.0-build-${{ github.run_number }}
+          name: Comic Video Maker v1.0.0 (Build #${{ github.run_number }})
+          body: "Signed installable Android APK built by HTML2App Studio."
+          files: html2app-comic-video-maker-v1.0.0.apk
