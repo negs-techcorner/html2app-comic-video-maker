@@ -1,9 +1,9 @@
 import os
-from PIL import Image, ImageDraw
+from PIL import Image
 
-BG_HEX = "#FFFFFF"
-SRC_ICON = "assets/icon.png"
+ICON_SRC = "assets/icon-only.png"
 RES_DIR = "android/app/src/main/res"
+BG_COLOR = "#FFFFFF"
 
 DENSITIES = {
     "mipmap-mdpi": (48, 108),
@@ -13,53 +13,62 @@ DENSITIES = {
     "mipmap-xxxhdpi": (192, 432),
 }
 
-def hex_to_rgba(h):
-    h = h.lstrip("#")
-    if len(h) == 3:
-        h = "".join([c*2 for c in h])
-    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4)) + (255,)
+def make_adaptive_foreground(src_img, canvas_size):
+    # Safe zone is 66/108 (~61%) of adaptive icon canvas
+    safe_size = int(canvas_size * 0.64)
+    resized = src_img.resize((safe_size, safe_size), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
+    offset = (canvas_size - safe_size) // 2
+    canvas.paste(resized, (offset, offset), resized)
+    return canvas
 
-bg_rgba = hex_to_rgba(BG_HEX)
-src = Image.open(SRC_ICON).convert("RGBA")
+def make_legacy_square(src_img, size, bg_hex):
+    bg = Image.new("RGBA", (size, size), bg_hex)
+    resized = src_img.resize((size, size), Image.Resampling.LANCZOS)
+    bg.paste(resized, (0, 0), resized)
+    return bg
 
-for folder, (legacy_sz, fg_sz) in DENSITIES.items():
-    out_dir = os.path.join(RES_DIR, folder)
-    os.makedirs(out_dir, exist_ok=True)
+def main():
+    if not os.path.exists(ICON_SRC):
+        print("Icon source not found, skipping.")
+        return
 
-    # 1. Legacy Square Launcher Icon (ic_launcher.png)
-    sq_bg = Image.new("RGBA", (legacy_sz, legacy_sz), bg_rgba)
-    sq_icon = src.resize((legacy_sz, legacy_sz), Image.Resampling.LANCZOS)
-    sq_bg.alpha_composite(sq_icon)
-    sq_bg.save(os.path.join(out_dir, "ic_launcher.png"), "PNG")
+    src = Image.open(ICON_SRC).convert("RGBA")
 
-    # 2. Legacy Round Launcher Icon (ic_launcher_round.png)
-    mask = Image.new("L", (legacy_sz, legacy_sz), 0)
-    draw = ImageDraw.Draw(mask)
-    draw.ellipse((0, 0, legacy_sz - 1, legacy_sz - 1), fill=255)
-    round_img = Image.new("RGBA", (legacy_sz, legacy_sz), (0, 0, 0, 0))
-    round_img.paste(sq_bg, (0, 0), mask=mask)
-    round_img.save(os.path.join(out_dir, "ic_launcher_round.png"), "PNG")
+    for folder, (legacy_px, adaptive_px) in DENSITIES.items():
+        out_dir = os.path.join(RES_DIR, folder)
+        os.makedirs(out_dir, exist_ok=True)
 
-    # 3. Android 8.0+ Adaptive Foreground (centered at ~62% inside 108dp safe zone)
-    fg_canvas = Image.new("RGBA", (fg_sz, fg_sz), (0, 0, 0, 0))
-    safe_dim = int(fg_sz * 0.62)
-    fg_icon = src.resize((safe_dim, safe_dim), Image.Resampling.LANCZOS)
-    offset = (fg_sz - safe_dim) // 2
-    fg_canvas.alpha_composite(fg_icon, (offset, offset))
-    fg_canvas.save(os.path.join(out_dir, "ic_launcher_foreground.png"), "PNG")
+        legacy = make_legacy_square(src, legacy_px, BG_COLOR)
+        legacy.save(os.path.join(out_dir, "ic_launcher.png"), "PNG")
+        legacy.save(os.path.join(out_dir, "ic_launcher_round.png"), "PNG")
 
-# 4. Write values/ic_launcher_background.xml
-values_dir = os.path.join(RES_DIR, "values")
-os.makedirs(values_dir, exist_ok=True)
-with open(os.path.join(values_dir, "ic_launcher_background.xml"), "w") as f:
-    f.write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">' + BG_HEX + '</color>\n</resources>\n')
+        fg = make_adaptive_foreground(src, adaptive_px)
+        fg.save(os.path.join(out_dir, "ic_launcher_foreground.png"), "PNG")
 
-# 5. Overwrite mipmap-anydpi-v26/ic_launcher.xml & ic_launcher_round.xml
-anydpi_dir = os.path.join(RES_DIR, "mipmap-anydpi-v26")
-os.makedirs(anydpi_dir, exist_ok=True)
-adaptive_xml = '<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n    <background android:drawable="@color/ic_launcher_background"/>\n    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>\n</adaptive-icon>\n'
-for xml_name in ("ic_launcher.xml", "ic_launcher_round.xml"):
-    with open(os.path.join(anydpi_dir, xml_name), "w") as f:
+    values_dir = os.path.join(RES_DIR, "values")
+    os.makedirs(values_dir, exist_ok=True)
+    with open(os.path.join(values_dir, "ic_launcher_background.xml"), "w", encoding="utf-8") as f:
+        f.write(f'''<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">{BG_COLOR}</color>
+</resources>
+''')
+
+    anydpi_dir = os.path.join(RES_DIR, "mipmap-anydpi-v26")
+    os.makedirs(anydpi_dir, exist_ok=True)
+    adaptive_xml = '''<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+</adaptive-icon>
+'''
+    with open(os.path.join(anydpi_dir, "ic_launcher.xml"), "w", encoding="utf-8") as f:
+        f.write(adaptive_xml)
+    with open(os.path.join(anydpi_dir, "ic_launcher_round.xml"), "w", encoding="utf-8") as f:
         f.write(adaptive_xml)
 
-print("Adaptive icons generated successfully with background", BG_HEX)
+    print("Android Adaptive & Legacy Icons generated successfully.")
+
+if __name__ == "__main__":
+    main()
