@@ -1,0 +1,8 @@
+{
+  "appId": "com.studio.mywebapp",
+  "appName": "Comic Video Maker",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}
