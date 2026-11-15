@@ -1,12 +1,13 @@
 {
   "name": "comic-video-maker",
   "version": "1.0.0",
-  "description": "Comic Video Maker compiled via HTML2App Studio",
-  "main": "www/index.html",
+  "private": true,
+  "description": "Comic Video Maker built with HTML2App Studio",
   "dependencies": {
     "@capacitor/core": "^6.1.2",
-    "@capacitor/cli": "^6.1.2",
-    "@capacitor/android": "^6.1.2",
-    "@capacitor/assets": "^3.0.5"
+    "@capacitor/android": "^6.1.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2"
   }
 }
