@@ -1,0 +1,5 @@
+Nama aplikasi: comic video maker
+Package ID: com.techcorner.comicvideomaker
+Versi: 1.0
+File utama: index.html (di root ZIP)
+Ikon: icon.png (512x512)
