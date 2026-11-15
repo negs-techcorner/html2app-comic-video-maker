@@ -2,6 +2,8 @@ name: Build Signed Android APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main, master ]
 
 permissions:
   contents: write
@@ -10,78 +12,69 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout Source Code
         uses: actions/checkout@v4
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: '20'
 
       - name: Setup Java 17 (Temurin)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
-          distribution: "temurin"
-          java-version: "17"
+          distribution: 'temurin'
+          java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Capacitor Dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Add Android Platform
-        run: npx cap add android
-
-      - name: Generate Android Adaptive Icons & Mipmaps
+      - name: Configure Android SDK & Licenses
         run: |
-          python3 -m pip install --quiet pillow || (sudo apt-get update -qq && sudo apt-get install -y -qq python3-pil)
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -f "$SDKMANAGER" ]; then
+            SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name "sdkmanager" | head -n 1)
+          fi
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Install Capacitor Dependencies & Add Android
+        run: |
+          npm install --no-audit --no-fund
+          npx cap add android
+
+      - name: Configure Android Manifest, Version & Adaptive Launcher Icons
+        run: |
+          python3 -m pip install pillow --break-system-packages --quiet || pip3 install pillow --quiet
           python3 generate_icons.py
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          BUILD_GRADLE="android/app/build.gradle"
+          sed -i 's/versionCode 1/versionCode 1/g' "$BUILD_GRADLE"
+          sed -i 's/versionName "1.0"/versionName "1.0.0"/g' "$BUILD_GRADLE"
+          sed -i 's/android:name=".MainActivity"/android:name=".MainActivity" android:screenOrientation="portrait"/g' "$MANIFEST"
+          sed -i 's/android:theme="@style\/AppTheme.NoActionBarLaunch"/android:theme="@android:style\/Theme.NoTitleBar.Fullscreen"/g' "$MANIFEST"
+          npx cap sync android
 
-      - name: Configure Version, Orientation & Fullscreen
-        run: |
-          python3 - << "EOF"
-          import re
-          gradle_path = "android/app/build.gradle"
-          with open(gradle_path, "r") as f:
-              g = f.read()
-          g = re.sub(r"versionCode\s+\d+", "versionCode 1", g)
-          g = re.sub(r'versionName\s+"[^"]+"', 'versionName "1.0.0"', g)
-          with open(gradle_path, "w") as f:
-              f.write(g)
-
-          manifest_path = "android/app/src/main/AndroidManifest.xml"
-          with open(manifest_path, "r") as f:
-              m = f.read()
-          if "android:screenOrientation=" not in m:
-              m = m.replace("<activity", '<activity android:screenOrientation="portrait"', 1)
-          if True:
-              m = m.replace("Theme.AppCompat.Light.NoActionBar", "Theme.AppCompat.Light.NoActionBar.FullScreen")
-          with open(manifest_path, "w") as f:
-              f.write(m)
-          EOF
-
-      - name: Sync Web Assets to Android
-        run: npx cap sync android
-
-      - name: Compile Release APK via Gradle
+      - name: Generate Release Keystore & Build Signed APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
-
-      - name: Sign Release APK
-        run: |
-          keytool -genkeypair -v -keystore release.keystore -alias html2app -keyalg RSA -keysize 2048 -validity 10000 -storepass android123 -keypass android123 -dname "CN=HTML2App, OU=Mobile, O=TechCorner, L=Jakarta, S=ID, C=ID"
-          UNSIGNED_APK=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          KEYSTORE_PATH="$GITHUB_WORKSPACE/release-key.jks"
+          keytool -genkeypair -v -keystore "$KEYSTORE_PATH" \
+            -alias html2appkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android123 -keypass android123 \
+            -dname "CN=Comic Video Maker, OU=Mobile, O=HTML2App, L=Jakarta, S=ID, C=ID"
+          UNSIGNED_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          ZIPALIGN=$(find "$ANDROID_HOME/build-tools" -name "zipalign" | sort -V | tail -n 1)
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -n 1)
-          "$APKSIGNER" sign --ks release.keystore --ks-pass pass:android123 --key-pass pass:android123 --out "html2app-comic-video-maker-v1.0.0.apk" "$UNSIGNED_APK"
-          ls -lh "html2app-comic-video-maker-v1.0.0.apk"
+          "$ZIPALIGN" -v -p 4 "$UNSIGNED_APK" "$GITHUB_WORKSPACE/aligned.apk"
+          "$APKSIGNER" sign --ks "$KEYSTORE_PATH" --ks-key-alias html2appkey \
+            --ks-pass pass:android123 --key-pass pass:android123 \
+            --out "$GITHUB_WORKSPACE/comic-video-maker-v1.0.0.apk" "$GITHUB_WORKSPACE/aligned.apk"
 
       - name: Publish Signed APK to GitHub Releases
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v1.0.0-build-${{ github.run_number }}
-          name: Comic Video Maker v1.0.0 (Build #${{ github.run_number }})
-          body: "Signed installable Android APK built by HTML2App Studio."
-          files: html2app-comic-video-maker-v1.0.0.apk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="v1.0.0-${{ github.run_number }}"
+          gh release create "$TAG_NAME" "$GITHUB_WORKSPACE/comic-video-maker-v1.0.0.apk" \
+            --title "Comic Video Maker v1.0.0 (Build #${{ github.run_number }})" \
+            --notes "Compiled automatically by HTML2App Studio."
