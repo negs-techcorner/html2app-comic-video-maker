@@ -172,12 +172,8 @@ body:not([data-mode="world"]):not([data-mode="poster"]):not([data-mode="slide"])
 <div class="grp only-vec"><label class="f"><input type="checkbox" id="vecOn"> Gambar vektor</label><span class="mute">Untuk gambar berbentuk (PNG transparan): scene mengikuti bentuk gambar</span></div>
 <div class="grp"><label class="f"><input type="checkbox" id="mvOn"> Moving scene</label><select id="mvMode" aria-label="Gerak scene"><option value="zin">Zoom in</option><option value="zout">Zoom out</option><option value="pan">Bergeser</option><option value="rot">Rotasi</option></select><select id="mvStr" aria-label="Kekuatan gerak scene"><option value="0">Halus</option><option value="1" selected>Sedang</option><option value="2">Kuat</option></select></div>
 <div class="grp"><label class="f"><input type="checkbox" id="mtOn"> Motion animation</label><select id="mtStyle" aria-label="Gaya motion animation"><option value="bubble">Bubbles</option><option value="spark">Sparkles</option><option value="lines">Speed lines</option><option value="wave">Waves</option><option value="confetti">Confetti</option><option value="rays">Rotating rays</option></select><select id="mtStr" aria-label="Kekuatan motion animation"><option value="0">Halus</option><option value="1" selected>Sedang</option><option value="2">Kuat</option></select><label class="f"><input type="checkbox" id="mtBg"> Background</label></div>
+<div class="grp"><label class="f"><input type="checkbox" id="oBars"> Bar sinema</label><select id="barMode" aria-label="Mode bar sinema"><option value="static" selected>Statis</option><option value="dyn">Dinamis</option></select></div>
 <div class="grp only-story"><label class="f"><input type="checkbox" id="stepLine"> Step line (jalur putus-putus antar scene)</label><select id="stepStyle" aria-label="Gaya step line"><option value="dot">Titik</option><option value="dash">Strip</option></select></div>
-</div>
-<div class="card">
-<h2>Bar sinema</h2>
-<div class="grp"><label class="f"><input type="checkbox" id="oBars"> Aktifkan bar sinema</label><label class="f">Mode <select id="barMode" aria-label="Mode bar sinema"><option value="static" selected>Statis</option><option value="dyn">Dinamis</option></select></label></div>
-<p class="mute" style="margin:6px 0 0">Statis: bar tetap di atas dan bawah. Dinamis: bar menutup lalu membuka setiap berpindah scene.</p>
 </div>
 <div class="card">
 <h2>Slide</h2>
@@ -402,7 +398,7 @@ function renderMain(t){
  if(!s.alpha){const g=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*.3,W/2,H/2,Math.max(W,H)*.75);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.55)');ctx.fillStyle=g;ctx.fillRect(m,m,pw,ph)}
  if($('oSpeed').checked&&lt<.5){const a=(1-lt/.5)*.7;ctx.fillStyle=`rgba(255,255,255,${a})`;const cx=W/2,cy=H/2,R=Math.hypot(W,H);for(let k=0;k<48;k++){const an=(k/48)*6.283+i*.7,w=.035+((k*7+i)%5)*.012;ctx.beginPath();ctx.moveTo(cx+Math.cos(an)*R*.28*(1+lt),cy+Math.sin(an)*R*.28*(1+lt));ctx.lineTo(cx+Math.cos(an-w)*R,cy+Math.sin(an-w)*R);ctx.lineTo(cx+Math.cos(an+w)*R,cy+Math.sin(an+w)*R);ctx.fill()}}
  if(lt<.14){ctx.fillStyle=`rgba(255,255,255,${1-lt/.14})`;ctx.fillRect(m,m,pw,ph)}
- if($('oBars').checked){const b=ph*Math.min(.5,barFrac(p,i,slides.length)*1.1);ctx.fillStyle='#000';ctx.fillRect(m,m,pw,b);ctx.fillRect(m,m+ph-b,pw,b)}
+ cineDraw(m,m,pw,ph,p,i,slides.length,1.1);
  ctx.restore();
  const ps=$('pstyle').value;ctx.lineJoin='round';ctx.lineWidth=ps==='box'?m*.5:m*.4;ctx.strokeStyle=ps==='box'?'#fff':'#111';shape(m,m,pw,ph,i);ctx.stroke();
  }
@@ -504,7 +500,7 @@ function renderWorld(t,W,H){
  if($('oSpeed').checked&&la>=0&&la<.5){const c0=W/2,c1=H/2,R=Math.hypot(W,H);ctx.fillStyle=`rgba(255,255,255,${(1-la/.5)*.6})`;
   for(let q=0;q<48;q++){const an=q/48*6.283+i*.7,w=.035+((q*7+i)%5)*.012,r0=R*.28*(1+la);ctx.beginPath();ctx.moveTo(c0+Math.cos(an)*r0,c1+Math.sin(an)*r0);ctx.lineTo(c0+Math.cos(an-w)*R,c1+Math.sin(an-w)*R);ctx.lineTo(c0+Math.cos(an+w)*R,c1+Math.sin(an+w)*R);ctx.fill()}}
  if(la>=0&&la<.14){ctx.fillStyle=`rgba(255,255,255,${1-la/.14})`;ctx.fillRect(0,0,W,H)}
- if($('oBars').checked){const b=H*barFrac(u,i,slides.length);ctx.fillStyle='#000';ctx.fillRect(0,0,W,b);ctx.fillRect(0,H-b,W,b)}
+ cineDraw(0,0,W,H,u,i,slides.length,1);
  cap(s,i,(la-.1)/.4,W,H);
 }
 
@@ -614,7 +610,7 @@ function renderSticker(t,W,H){
   ctx.fillStyle='#fff';rrect(-T.bw/2,0,T.bw,T.bh,T.fw*.8);ctx.fill();ctx.shadowColor='transparent';
   ctx.fillStyle='#1d2330';ctx.textAlign='center';ctx.textBaseline='middle';T.Ls.forEach((l,q)=>ctx.fillText(l,0,T.fw*.45+T.lh*(q+.5)));ctx.restore();ctx.textBaseline='alphabetic'}}
  ctx.restore();
- if($('oBars').checked){const b=H*barFrac(u,i,slides.length);ctx.fillStyle='#000';ctx.fillRect(0,0,W,b);ctx.fillRect(0,H-b,W,b)}
+ cineDraw(0,0,W,H,u,i,slides.length,1);
 }
 
 const CPC={};
@@ -1009,7 +1005,12 @@ let cpFor=-1;
 $('fCp').onchange=async e=>{const s=slides[cpFor],files=[...e.target.files];e.target.value='';if(!s||running)return;s.cp=s.cp||[];
  for(const f of files){if(s.cp.length>=2)break;const url=URL.createObjectURL(f),img=new Image();img.src=url;try{await img.decode()}catch(x){continue}const j=s.cp.length;s.cp.push({blob:f,img,url,alpha:hasAlpha(img),pos:j?'tl':'br',mo:j?'sway':'float'})}
  ui();status(`Properti sudut slide ${cpFor+1}: ${s.cp.length}/2. Berlaku di mode Kanvas besar dan Sticker.`)};
-function barFrac(u,i,n){if(!$('oBars').checked)return 0;if($('barMode').value!=='dyn')return .1;const e=x=>{x=Math.max(0,Math.min(1,x));return x*x*(3-2*x)},c=Math.max(e(1-u/.2),i<n-1?e((u-.8)/.2):0);return .1+.4*c}
+const BT=[{k:'p',v:.035},{k:'t',v:.08},{k:'t',v:-.2},{k:'p',v:-.06},{k:'t',v:-.08},{k:'t',v:.2}];
+function cineDraw(x0,y0,w,h,u,i,n,k){if(!$('oBars').checked)return;let a=.1,T=0;
+ if($('barMode').value==='dyn'){const e=x=>{x=Math.max(0,Math.min(1,x));return x*x*(3-2*x)},cs=e(1-u/.2),ce=i<n-1?e((u-.8)/.2):0,c=Math.max(cs,ce),j=cs>=ce?i:i+1,ty=BT[j%6];if(ty.k==='p')a+=ty.v*c;else T=ty.v*c}
+ a*=k;T*=k;const tL=Math.max(0,h*(a-T/2)),tR=Math.max(0,h*(a+T/2)),bL=Math.max(0,h*(a+T/2)),bR=Math.max(0,h*(a-T/2));
+ ctx.fillStyle='#000';ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(x0+w,y0);ctx.lineTo(x0+w,y0+tR);ctx.lineTo(x0,y0+tL);ctx.closePath();ctx.fill();
+ ctx.beginPath();ctx.moveTo(x0,y0+h);ctx.lineTo(x0+w,y0+h);ctx.lineTo(x0+w,y0+h-bR);ctx.lineTo(x0,y0+h-bL);ctx.closePath();ctx.fill()}
 function capZone(s,W,H){const m=Math.round(Math.min(W,H)*.045),ph=H-2*m,bars=$('oBars').checked;let z=m+ph*(bars?.16:.07);
  if(s.text.trim()){const pw=W-2*m,fs=Math.round(Math.min(W,H*.62)*.062);ctx.save();ctx.font=`${fs}px Bangers,Impact,sans-serif`;const L=wrap(s.text.toUpperCase(),pw*.78),bh=L.length*fs*1.12+fs*.9;ctx.restore();z+=bh+fs*.5}else if(bars)z=Math.max(z,H*.12);return z}
 function cornerDraw(s,cw,ch,t,ta,o){const cp=s.cp;if(!cp||!cp.length)return;const mg=Math.min(cw,ch)*.035,ps=Math.min(cw,ch)*.24*(o.k||1),used={br:0,tl:0};
