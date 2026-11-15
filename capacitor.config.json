@@ -2,15 +2,8 @@
   "appId": "com.techcorner.comicvideomaker",
   "appName": "Comic Video Maker",
   "webDir": "www",
-  "server": {
-    "androidScheme": "https"
-  },
+  "bundledWebRuntime": false,
   "android": {
     "allowMixedContent": true
-  },
-  "plugins": {
-    "StatusBar": {
-      "overlaysWebView": true
-    }
   }
 }
